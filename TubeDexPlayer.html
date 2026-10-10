@@ -515,7 +515,7 @@
   // ===================================================
   // TubeDex PlaylistPlayer - YouTube Player, playlist, download via cobalt.tools
   // ===================================================
-  const YT_API_KEY = "AIzaSyCE0Y45Jn6x64-XcxvaletB_n5YZOWcd70";
+  const YT_API_KEY = (localStorage.getItem('tubedex_youtube_api_key') || '').trim();
   const PLAYER_QUEUE_KEY = 'tubedex_playlist_v1';
   let queueStorageWarning = false;
   function readSavedQueue() {
@@ -668,19 +668,27 @@
   async function searchVideos() {
     const query = searchInput.value.trim();
     if (!query) { showToast("Please enter a search term", true); searchInput.focus(); return; }
+
     searchBtn.disabled = true;
     searchBtn.textContent = "Loading...";
+
     try {
+      if (!YT_API_KEY) {
+        throw new Error("YouTube API key not configured. Set localStorage.tubedex_youtube_api_key to enable search.");
+      }
+
       const res = await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=22&q=${encodeURIComponent(query)}&type=video&key=${YT_API_KEY}`);
       const data = await res.json();
       if (!res.ok || data.error) {
         throw new Error(data.error?.message || `YouTube search failed (${res.status}).`);
       }
+
       const items = data.items || [];
       if (!items.length) {
         showToast("No results found", true);
         return;
       }
+
       const results = items.filter(v => v.id && v.id.videoId);
       if (!results.length) { showToast("YouTube returned no playable videos.", true); return; }
       playlist = results;

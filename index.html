@@ -988,7 +988,7 @@
 
 <script>
   // ── SETTINGS ──
-  const YT_API_KEY = "AIzaSyCE0Y45Jn6x64-XcxvaletB_n5YZOWcd70";
+  const YT_API_KEY = (localStorage.getItem('tubedex_youtube_api_key') || '').trim();
   const PLAYER_QUEUE_KEY = 'tubedex_playlist_v1';
   let activeSearchRequest = 0;
   var resultsDest = localStorage.getItem('tubedex_dest') || 'youtube';
@@ -1127,12 +1127,11 @@
 
     const sort     = document.getElementById('sort').value;
     const duration = document.getElementById('duration').value;
-    const params   = new URLSearchParams();
+    const params = new URLSearchParams();
     params.set('search_query', fullQuery);
 
-    const spVal = encodeFilters(sort, duration);
-    if (spVal) params.set('sp', spVal);
-
+    // Keep the URL stable and compatible across browsers. A hardcoded sp filter can
+    // produce broken results, so we rely on the search query itself instead.
     const ytUrl = 'https://www.youtube.com/results?' + params.toString();
 
     if (resultsDest === 'onsite') {
@@ -1203,6 +1202,9 @@
     searchButton.disabled = true;
     searchButton.textContent = 'Searching...';
     try {
+      if (!YT_API_KEY) {
+        throw new Error('YouTube API key not configured. Set localStorage.tubedex_youtube_api_key to enable TubeDex results.');
+      }
       const response = await fetch('https://www.googleapis.com/youtube/v3/search?' + params.toString());
       const data = await response.json();
       if (requestId !== activeSearchRequest) return;
@@ -1283,18 +1285,6 @@
     } catch (error) {
       document.getElementById('search-results-status').textContent = 'Could not save the player queue in this browser. Check storage settings and try again.';
     }
-  }
-
-  function encodeFilters(sort, duration) {
-    const sortMap = { upload_date: 2, view_count: 3, rating: 1 };
-    const durMap  = { long: 1, medium: 2, short: 3 };
-    const sortVal = sortMap[sort];
-    const durVal  = durMap[duration];
-    if (!sortVal && !durVal) return null;
-    const bytes = [];
-    if (sortVal) bytes.push(0x08, sortVal);
-    if (durVal)  bytes.push(0x10, durVal);
-    return btoa(String.fromCharCode.apply(null, bytes));
   }
 
   // Wire up search button
