@@ -516,14 +516,30 @@
   // TubeDex PlaylistPlayer - YouTube Player, playlist, download via cobalt.tools
   // ===================================================
   const YT_API_KEY = "AIzaSyCE0Y45Jn6x64-XcxvaletB_n5YZOWcd70";
-  let playlist = [];
-  let currentIndex = 0;
+  const PLAYER_QUEUE_KEY = 'tubedex_playlist_v1';
+  let queueStorageWarning = false;
+  function readSavedQueue() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(PLAYER_QUEUE_KEY) || 'null');
+      if (!saved || !Array.isArray(saved.playlist)) return { playlist: [], currentIndex: 0 };
+      const items = saved.playlist.filter(item => item?.id?.videoId);
+      const index = Math.min(Math.max(Number(saved.currentIndex) || 0, 0), Math.max(items.length - 1, 0));
+      return { playlist: items, currentIndex: index };
+    } catch (error) {
+      queueStorageWarning = true;
+      return { playlist: [], currentIndex: 0 };
+    }
+  }
+  const savedQueue = readSavedQueue();
+  let playlist = savedQueue.playlist;
+  let currentIndex = savedQueue.currentIndex;
   let ytPlayer = null;
   let playerReady = false;
   let isPlaying = false;
   let shuffleMode = false;
   let loopMode = true;
-  let pendingVideoId = null;
+  let pendingVideoId = playlist[currentIndex]?.id?.videoId || null;
+  let autoplayFromHandoff = new URLSearchParams(window.location.search).get('autoplay') === '1';
   let batchActive = false;
   let batchStop = false;
 
@@ -557,16 +573,21 @@
 
   function escapeHtml(str) {
     if (!str) return '';
-    return String(str).replace(/[&<>]/g, function(m) {
-      if (m === '&') return '&amp;';
-      if (m === '<') return '&lt;';
-      if (m === '>') return '&gt;';
-      return m;
+    return String(str).replace(/[&<>"']/g, function(m) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m];
     });
   }
 
   function updatePlayPauseUI() {
     playPauseBtn.textContent = isPlaying ? "Pause" : "Play";
+  }
+
+  function saveQueue() {
+    try {
+      localStorage.setItem(PLAYER_QUEUE_KEY, JSON.stringify({ playlist, currentIndex, autoplay: false }));
+    } catch (error) {
+      showToast("Could not save the playlist in this browser.", true);
+    }
   }
 
   function loadVideo(index) {
@@ -584,6 +605,7 @@
     } else {
       pendingVideoId = vid;
     }
+    saveQueue();
     renderPlaylist();
   }
 
@@ -600,18 +622,16 @@
       const item = playlist[i];
       const vid = item.id.videoId;
       const title = item.snippet ? item.snippet.title : 'Untitled';
-      const thumb = (item.snippet && item.snippet.thumbnails && item.snippet.thumbnails.default) 
-        ? item.snippet.thumbnails.default.url 
-        : (item.snippet?.thumbnails?.medium?.url || '');
+      const thumb = item.snippet?.thumbnails?.medium?.url || item.snippet?.thumbnails?.default?.url || '';
       const activeClass = (i === currentIndex) ? 'now-playing' : '';
       html += `
         <div class="video-item ${activeClass}" data-video-index="${i}">
-          <img src="${escapeHtml(thumb)}" loading="lazy" onerror="this.src='https://i.ytimg.com/vi/${vid}/default.jpg'">
+          <img src="${escapeHtml(thumb)}" loading="lazy" alt="" onerror="this.src='https://i.ytimg.com/vi/${encodeURIComponent(vid)}/default.jpg'">
           <div class="video-info">
             <div class="video-title">${escapeHtml(title)}</div>
             <div class="dl-btns">
-              <span class="dl-badge" data-vid="${vid}" data-vtitle="${escapeHtml(title)}" data-format="mp4">MP4</span>
-              <span class="dl-badge" data-vid="${vid}" data-vtitle="${escapeHtml(title)}" data-format="mp3">MP3</span>
+              <button type="button" class="dl-badge" data-vid="${escapeHtml(vid)}" data-vtitle="${escapeHtml(title)}" data-format="mp4">MP4</button>
+              <button type="button" class="dl-badge" data-vid="${escapeHtml(vid)}" data-vtitle="${escapeHtml(title)}" data-format="mp3">MP3</button>
             </div>
           </div>
         </div>
@@ -623,7 +643,7 @@
       const idx = row.getAttribute('data-video-index');
       if (idx !== null) {
         row.addEventListener('click', (e) => {
-          if (e.target.classList.contains('dl-badge')) return;
+          if (e.target.closest('.dl-badge')) return;
           loadVideo(parseInt(idx));
         });
       }
@@ -647,30 +667,31 @@
 
   async function searchVideos() {
     const query = searchInput.value.trim();
-    if (!query) { showToast("Please enter a search term", true); return; }
+    if (!query) { showToast("Please enter a search term", true); searchInput.focus(); return; }
     searchBtn.disabled = true;
     searchBtn.textContent = "Loading...";
     try {
       const res = await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=22&q=${encodeURIComponent(query)}&type=video&key=${YT_API_KEY}`);
       const data = await res.json();
-      if (data.error) {
-        showToast(`API error: ${data.error.message}`, true);
-        return;
+      if (!res.ok || data.error) {
+        throw new Error(data.error?.message || `YouTube search failed (${res.status}).`);
       }
       const items = data.items || [];
       if (!items.length) {
         showToast("No results found", true);
-        playlist = [];
-        renderPlaylist();
         return;
       }
-      playlist = items.filter(v => v.id && v.id.videoId);
-      if (!playlist.length) { showToast("No valid videos", true); return; }
+      const results = items.filter(v => v.id && v.id.videoId);
+      if (!results.length) { showToast("YouTube returned no playable videos.", true); return; }
+      playlist = results;
+      currentIndex = 0;
       renderPlaylist();
       loadVideo(0);
       showToast(`Loaded ${playlist.length} videos`);
-    } catch (err) {
-      showToast("Network error", true);
+    } catch (error) {
+      showToast(error instanceof TypeError
+        ? "Could not connect to YouTube. Check your connection and try again."
+        : error.message || "YouTube search failed. Try again.", true);
     } finally {
       searchBtn.disabled = false;
       searchBtn.textContent = "Search";
@@ -721,19 +742,19 @@
     batchStop = false;
     downloadAllBtn.textContent = "Stop";
     batchStatusDiv.style.display = "block";
-    batchStatusDiv.innerHTML = "Preparing batch (allow popups)...";
+    batchStatusDiv.textContent = "Preparing batch (allow popups)...";
     let completed = 0;
     for (let i = 0; i < playlist.length; i++) {
       if (batchStop) break;
       const vid = playlist[i].id.videoId;
       const titleShort = playlist[i].snippet?.title?.substring(0, 35) || "video";
-      batchStatusDiv.innerHTML = `[${i+1}/${playlist.length}] Opening ${titleShort} ...`;
+      batchStatusDiv.textContent = `[${i+1}/${playlist.length}] Opening ${titleShort} ...`;
       const cobaltUrl = `https://cobalt.tools/#${encodeURIComponent("https://www.youtube.com/watch?v=" + vid)}`;
       window.open(cobaltUrl, '_blank', 'noopener');
       completed++;
       await new Promise(r => setTimeout(r, 1700));
     }
-    batchStatusDiv.innerHTML = batchStop ? `Stopped after ${completed} downloads` : `Complete! Opened ${completed} tabs.`;
+    batchStatusDiv.textContent = batchStop ? `Stopped after ${completed} downloads` : `Complete! Opened ${completed} tabs.`;
     setTimeout(() => batchStatusDiv.style.display = "none", 5000);
     batchActive = false;
     downloadAllBtn.textContent = "Download All (mp4/mp3)";
@@ -751,13 +772,15 @@
     a.href = URL.createObjectURL(blob);
     a.download = "tubedex_playlist.txt";
     a.click();
-    URL.revokeObjectURL(a.href);
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     showToast("Playlist exported");
   }
 
   function clearPlaylist() {
     if (playlist.length && confirm("Clear entire playlist?")) {
       playlist = [];
+      currentIndex = 0;
+      saveQueue();
       renderPlaylist();
       if (ytPlayer && playerReady) ytPlayer.stopVideo();
       nowPlayingDiv.textContent = "Nothing playing — search to start";
@@ -776,9 +799,14 @@
           playerReady = true;
           e.target.setVolume(parseInt(volumeSlider.value));
           if (pendingVideoId) {
-            e.target.loadVideoById(pendingVideoId);
+            if (autoplayFromHandoff) {
+              e.target.loadVideoById(pendingVideoId);
+              isPlaying = true;
+            } else {
+              e.target.cueVideoById(pendingVideoId);
+              isPlaying = false;
+            }
             pendingVideoId = null;
-            isPlaying = true;
             updatePlayPauseUI();
           }
         },
@@ -788,8 +816,12 @@
           if (e.data === YT.PlayerState.PAUSED) { isPlaying = false; updatePlayPauseUI(); }
         },
         onError: (err) => {
-          showToast("Player error - skipping", true);
-          setTimeout(() => nextVideo(), 1500);
+          showToast("This video could not be played.", true);
+          if (playlist.length > 1) setTimeout(() => nextVideo(), 1500);
+          else {
+            isPlaying = false;
+            updatePlayPauseUI();
+          }
         }
       }
     });
@@ -805,11 +837,34 @@
   loopBtn.addEventListener('click', toggleLoop);
   volumeSlider.addEventListener('input', (e) => setVolume(e.target.value));
   exportPlaylistBtn.addEventListener('click', exportPlaylist);
-  clearPlaylistBtn.addEventListener('click', clearPlaylist);
+  clearPlaylistBtn.addEventListener('click', (event) => { event.preventDefault(); clearPlaylist(); });
   downloadAllBtn.addEventListener('click', () => { if (batchActive) batchStop = true; else batchDownloadAll(); });
-  document.getElementById('exportSidebarBtn')?.addEventListener('click', exportPlaylist);
+  document.getElementById('exportSidebarBtn')?.addEventListener('click', (event) => { event.preventDefault(); exportPlaylist(); });
 
-  showToast("TubeDex ready · search for music");
+  window.addEventListener('storage', (event) => {
+    if (event.key !== PLAYER_QUEUE_KEY || !event.newValue) return;
+    try {
+      const saved = JSON.parse(event.newValue);
+      if (!Array.isArray(saved.playlist)) return;
+      const oldVideoId = playlist[currentIndex]?.id?.videoId;
+      const nextQueue = saved.playlist.filter(item => item?.id?.videoId);
+      const nextIndex = Math.min(Math.max(Number(saved.currentIndex) || 0, 0), Math.max(nextQueue.length - 1, 0));
+      const nextVideoId = nextQueue[nextIndex]?.id?.videoId;
+      playlist = nextQueue;
+      currentIndex = nextIndex;
+      renderPlaylist();
+      if (saved.autoplay && nextVideoId && nextVideoId !== oldVideoId) loadVideo(currentIndex);
+    } catch (error) {
+      showToast("Could not sync the playlist from another TubeDex tab.", true);
+    }
+  });
+
+  renderPlaylist();
+  if (queueStorageWarning) showToast("Could not restore the saved playlist from this browser.", true);
+  else {
+    if (playlist.length) nowPlayingDiv.textContent = playlist[currentIndex].snippet?.title || "Ready to play";
+    showToast("TubeDex ready · search for music");
+  }
 </script>
 </body>
 </html>
