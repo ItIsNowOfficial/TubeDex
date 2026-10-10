@@ -515,7 +515,14 @@
   // ===================================================
   // TubeDex PlaylistPlayer - YouTube Player, playlist, download via cobalt.tools
   // ===================================================
-  const YT_API_KEY = "AIzaSyCE0Y45Jn6x64-XcxvaletB_n5YZOWcd70";
+  const YT_API_KEY = (localStorage.getItem('tubedex_youtube_api_key') || '').trim();
+  const FALLBACK_VIDEO_LIST = [
+    { id: { videoId: 'dQw4w9WgXcQ' }, snippet: { title: 'Classic demo: Rick Astley - Never Gonna Give You Up' } },
+    { id: { videoId: 'fJ9rUzIMcZQ' }, snippet: { title: 'Iconic mix: 2000s rock anthem' } },
+    { id: { videoId: '2Vv-BfVoR4g' }, snippet: { title: 'Retro pop favorite - a reliable demo track' } },
+    { id: { videoId: 'ScMzIvxBSi4' }, snippet: { title: 'High-energy demo video pick' } },
+    { id: { videoId: 'aqz-KE-bpKQ' }, snippet: { title: 'TubeDex demo queue track' } }
+  ];
   let playlist = [];
   let currentIndex = 0;
   let ytPlayer = null;
@@ -639,6 +646,17 @@
     });
   }
 
+  function buildFallbackPlaylist(query) {
+    const sanitizedQuery = (query || 'TubeDex').trim() || 'TubeDex';
+    return FALLBACK_VIDEO_LIST.map((video, index) => ({
+      ...video,
+      snippet: {
+        ...video.snippet,
+        title: `${sanitizedQuery} demo result ${index + 1}`
+      }
+    }));
+  }
+
   function downloadSingle(videoId, title, format) {
     const url = `https://cobalt.tools/#${encodeURIComponent("https://www.youtube.com/watch?v=" + videoId)}`;
     window.open(url, '_blank', 'noopener');
@@ -648,15 +666,26 @@
   async function searchVideos() {
     const query = searchInput.value.trim();
     if (!query) { showToast("Please enter a search term", true); return; }
+
     searchBtn.disabled = true;
     searchBtn.textContent = "Loading...";
+
     try {
-      const res = await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=22&q=${encodeURIComponent(query)}&type=video&key=${YT_API_KEY}`);
-      const data = await res.json();
-      if (data.error) {
-        showToast(`API error: ${data.error.message}`, true);
+      if (!YT_API_KEY) {
+        playlist = buildFallbackPlaylist(query);
+        renderPlaylist();
+        loadVideo(0);
+        showToast("No YouTube API key configured — showing demo playlist. Set localStorage.tubedex_youtube_api_key for live search.");
         return;
       }
+
+      const res = await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=22&q=${encodeURIComponent(query)}&type=video&key=${YT_API_KEY}`);
+      const data = await res.json();
+
+      if (!res.ok || data.error) {
+        throw new Error(data?.error?.message || `Request failed (${res.status})`);
+      }
+
       const items = data.items || [];
       if (!items.length) {
         showToast("No results found", true);
@@ -664,13 +693,21 @@
         renderPlaylist();
         return;
       }
+
       playlist = items.filter(v => v.id && v.id.videoId);
-      if (!playlist.length) { showToast("No valid videos", true); return; }
+      if (!playlist.length) {
+        showToast("No valid videos", true);
+        return;
+      }
+
       renderPlaylist();
       loadVideo(0);
       showToast(`Loaded ${playlist.length} videos`);
     } catch (err) {
-      showToast("Network error", true);
+      playlist = buildFallbackPlaylist(query);
+      renderPlaylist();
+      loadVideo(0);
+      showToast("Live search unavailable — demo results loaded instead.", true);
     } finally {
       searchBtn.disabled = false;
       searchBtn.textContent = "Search";

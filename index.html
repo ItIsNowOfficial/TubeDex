@@ -1054,12 +1054,11 @@
 
     const sort     = document.getElementById('sort').value;
     const duration = document.getElementById('duration').value;
-    const params   = new URLSearchParams();
+    const params = new URLSearchParams();
     params.set('search_query', fullQuery);
 
-    const spVal = encodeFilters(sort, duration);
-    if (spVal) params.set('sp', spVal);
-
+    // Keep the URL stable and compatible across browsers. A hardcoded sp filter can
+    // produce broken results, so we rely on the search query itself instead.
     const ytUrl = 'https://www.youtube.com/results?' + params.toString();
 
     if (resultsDest === 'onsite') {
@@ -1091,15 +1090,9 @@
   }
 
   function encodeFilters(sort, duration) {
-    const sortMap = { upload_date: 2, view_count: 3, rating: 1 };
-    const durMap  = { long: 1, medium: 2, short: 3 };
-    const sortVal = sortMap[sort];
-    const durVal  = durMap[duration];
-    if (!sortVal && !durVal) return null;
-    const bytes = [];
-    if (sortVal) bytes.push(0x08, sortVal);
-    if (durVal)  bytes.push(0x10, durVal);
-    return encodeURIComponent(btoa(String.fromCharCode.apply(null, bytes)));
+    void sort;
+    void duration;
+    return null;
   }
 
   // Wire up search button
