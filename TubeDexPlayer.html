@@ -515,7 +515,8 @@
   // ===================================================
   // TubeDex PlaylistPlayer - YouTube Player, playlist, download via cobalt.tools
   // ===================================================
-  const YT_API_KEY = (localStorage.getItem('tubedex_youtube_api_key') || '').trim();
+  let youtubeApiKey = (localStorage.getItem('tubedex_youtube_api_key') || '').trim();
+  let youtubeApiKeyRequest;
   const PLAYER_QUEUE_KEY = 'tubedex_playlist_v1';
   let queueStorageWarning = false;
   function readSavedQueue() {
@@ -560,6 +561,23 @@
   const batchStatusDiv = document.getElementById('batchStatus');
   const clearPlaylistBtn = document.getElementById('clearPlaylistBtn');
   const toastDiv = document.getElementById('toastMsg');
+
+  async function getYouTubeApiKey() {
+    if (youtubeApiKey) return youtubeApiKey;
+    if (!youtubeApiKeyRequest) {
+      youtubeApiKeyRequest = fetch('/api/youtube-config', { cache: 'no-store' })
+        .then(response => {
+          if (!response.ok) throw new Error(`Configuration request failed (${response.status}).`);
+          return response.json();
+        })
+        .then(config => {
+          youtubeApiKey = typeof config.apiKey === 'string' ? config.apiKey.trim() : '';
+          return youtubeApiKey;
+        })
+        .catch(() => '');
+    }
+    return youtubeApiKeyRequest;
+  }
 
   let toastTimer = null;
   function showToast(msg, isError = false) {
@@ -673,11 +691,12 @@
     searchBtn.textContent = "Loading...";
 
     try {
-      if (!YT_API_KEY) {
-        throw new Error("YouTube API key not configured. Set localStorage.tubedex_youtube_api_key to enable search.");
+      const apiKey = await getYouTubeApiKey();
+      if (!apiKey) {
+        throw new Error("Search is not configured yet. Add YOUTUBE_API_KEY in Vercel Environment Variables and redeploy.");
       }
 
-      const res = await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=22&q=${encodeURIComponent(query)}&type=video&key=${YT_API_KEY}`);
+      const res = await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=22&q=${encodeURIComponent(query)}&type=video&key=${apiKey}`);
       const data = await res.json();
       if (!res.ok || data.error) {
         throw new Error(data.error?.message || `YouTube search failed (${res.status}).`);

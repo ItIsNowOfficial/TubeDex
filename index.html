@@ -988,10 +988,28 @@
 
 <script>
   // ── SETTINGS ──
-  const YT_API_KEY = (localStorage.getItem('tubedex_youtube_api_key') || '').trim();
+  let youtubeApiKey = (localStorage.getItem('tubedex_youtube_api_key') || '').trim();
+  let youtubeApiKeyRequest;
   const PLAYER_QUEUE_KEY = 'tubedex_playlist_v1';
   let activeSearchRequest = 0;
   var resultsDest = localStorage.getItem('tubedex_dest') || 'youtube';
+
+  async function getYouTubeApiKey() {
+    if (youtubeApiKey) return youtubeApiKey;
+    if (!youtubeApiKeyRequest) {
+      youtubeApiKeyRequest = fetch('/api/youtube-config', { cache: 'no-store' })
+        .then(response => {
+          if (!response.ok) throw new Error(`Configuration request failed (${response.status}).`);
+          return response.json();
+        })
+        .then(config => {
+          youtubeApiKey = typeof config.apiKey === 'string' ? config.apiKey.trim() : '';
+          return youtubeApiKey;
+        })
+        .catch(() => '');
+    }
+    return youtubeApiKeyRequest;
+  }
 
   function toggleSettings() {
     const panel = document.getElementById('settings-panel');
@@ -1070,7 +1088,7 @@
     window.open('https://www.youtube.com/results?search_query=' + encodeURIComponent(q), '_blank', 'noopener');
   }
 
-  function runSearch() {
+  async function runSearch() {
     const baseQuery = document.getElementById('query').value.trim();
     if (!baseQuery) {
       showSearchError('Enter keywords before searching.', document.getElementById('query'));
@@ -1135,12 +1153,17 @@
     const ytUrl = 'https://www.youtube.com/results?' + params.toString();
 
     if (resultsDest === 'onsite') {
+      const apiKey = await getYouTubeApiKey();
+      if (!apiKey) {
+        showSearchError('Search is not configured yet. Add YOUTUBE_API_KEY in Vercel Environment Variables and redeploy.');
+        return;
+      }
       const apiParams = new URLSearchParams({
         part: 'snippet',
         maxResults: '18',
         type: 'video',
         q: fullQuery,
-        key: YT_API_KEY
+        key: apiKey
       });
       const apiOrder = { upload_date: 'date', view_count: 'viewCount', rating: 'rating' }[sort];
       if (apiOrder) apiParams.set('order', apiOrder);
@@ -1202,9 +1225,6 @@
     searchButton.disabled = true;
     searchButton.textContent = 'Searching...';
     try {
-      if (!YT_API_KEY) {
-        throw new Error('YouTube API key not configured. Set localStorage.tubedex_youtube_api_key to enable TubeDex results.');
-      }
       const response = await fetch('https://www.googleapis.com/youtube/v3/search?' + params.toString());
       const data = await response.json();
       if (requestId !== activeSearchRequest) return;
