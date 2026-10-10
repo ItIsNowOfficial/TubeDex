@@ -661,8 +661,61 @@
     gap: 8px;
   }
 
+  #search-results-status {
+    background: #fff;
+    border: 1px solid #ccc;
+    border-top: none;
+    padding: 12px;
+    color: #666;
+    font-size: 13px;
+  }
+  #search-results-status:empty { display: none; }
+  #search-results-list {
+    background: #fff;
+    border: 1px solid #ccc;
+    border-top: none;
+  }
+  .search-result {
+    display: flex;
+    gap: 12px;
+    padding: 12px;
+    border-bottom: 1px solid #eee;
+  }
+  .search-result:last-child { border-bottom: none; }
+  .search-result img {
+    width: 160px;
+    height: 90px;
+    flex: 0 0 auto;
+    object-fit: cover;
+    background: #eee;
+  }
+  .search-result-info { flex: 1; min-width: 0; }
+  .search-result-title {
+    color: #06c;
+    font-size: 14px;
+    font-weight: bold;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+  .search-result-channel { color: #777; font-size: 12px; margin-top: 4px; }
+  .search-result-actions { display: flex; gap: 8px; margin-top: 10px; }
+  .search-result-actions button {
+    border: 1px solid #aaa;
+    border-radius: 3px;
+    background: #f4f4f4;
+    padding: 6px 10px;
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .search-result-actions button:hover { background: #fff0f0; border-color: #c00; }
+  .results-title-bar .btn-main { margin-left: auto; }
+  #search-form-status { padding: 0 12px; color: #c00; font-size: 12px; }
+  #search-form-status:empty { display: none; }
   @media (max-width: 480px) {
-    #results-frame { height: 420px !important; }
+    .search-result img { width: 112px; height: 63px; }
+    .search-result { gap: 8px; padding: 9px; }
+    .search-result-actions { flex-wrap: wrap; }
   }
 
 
@@ -704,8 +757,7 @@
 <div id="top-search">
   <div id="top-search-inner">
     <input type="text" id="top-bar-query" placeholder="Search via TubeDex"
-           autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
-           onkeydown="if(event.key==='Enter')quickSearch()">
+           autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
     <button class="btn-search-top" onclick="quickSearch()">Search</button>
   </div>
 </div>
@@ -858,13 +910,14 @@
       </div>
 
       <div class="info-box">
-        Results open on YouTube in a new tab. Date filters use YouTube's <code>after:</code> and <code>before:</code> search operators.
+        Choose YouTube or TubeDex results in Settings. Date filters use YouTube's <code>after:</code> and <code>before:</code> search operators.
       </div>
 
       <div class="button-bar">
         <button class="btn-main red" id="search-btn">Search Videos</button>
         <button class="btn-main" onclick="clearForm()">Clear</button>
       </div>
+      <div id="search-form-status" role="alert" aria-live="polite"></div>
 
     </div><!-- /.search-card -->
   </div><!-- /#main -->
@@ -897,7 +950,7 @@
         <span class="radio-box"></span>
         <div class="radio-label">
           <strong>Show results on TubeDex</strong>
-          <span>Results are shown inline on this page using the YouTube iFrame embed</span>
+          <span>Browse results here and add videos to the PlaylistPlayer queue</span>
         </div>
       </label>
     </div>
@@ -909,18 +962,17 @@
   </div>
 </div>
 
-<!-- RESULTS PANEL (shown when onsite mode is active) -->
+<!-- RESULTS PANEL (shown when TubeDex results mode is active) -->
 <div id="results-section" style="display:none;">
   <div id="results-inner">
     <div class="results-title-bar">
       <span class="yt-icon"></span>
       <span id="results-heading">Search Results</span>
-      <button class="btn-main" style="margin-left:auto;font-size:12px;padding:4px 12px;" onclick="document.getElementById('results-section').style.display='none'">✕ Close</button>
+      <a class="btn-main" style="font-size:12px;padding:4px 12px;text-decoration:none;" href="TubeDexPlayer.html" target="_blank" rel="noopener">Open PlaylistPlayer</a>
+      <button class="btn-main" style="font-size:12px;padding:4px 12px;" onclick="document.getElementById('results-section').style.display='none'">Close</button>
     </div>
-    <div id="results-frame-wrap">
-      <iframe id="results-frame" src="" frameborder="0" allowfullscreen
-              style="width:100%;height:600px;border:1px solid #ccc;border-top:none;background:#fff;display:block;"></iframe>
-    </div>
+    <div id="search-results-status" role="status" aria-live="polite"></div>
+    <div id="search-results-list"></div>
   </div>
 </div>
 
@@ -936,6 +988,9 @@
 
 <script>
   // ── SETTINGS ──
+  const YT_API_KEY = (localStorage.getItem('tubedex_youtube_api_key') || '').trim();
+  const PLAYER_QUEUE_KEY = 'tubedex_playlist_v1';
+  let activeSearchRequest = 0;
   var resultsDest = localStorage.getItem('tubedex_dest') || 'youtube';
 
   function toggleSettings() {
@@ -1001,10 +1056,12 @@
   }
 
   function clearForm() {
-    ['query','channel','year-from','year-to','from-dd','from-mm','from-yyyy','to-dd','to-mm','to-yyyy']
+    ['query','top-bar-query','channel','year-from','year-to','from-dd','from-mm','from-yyyy','to-dd','to-mm','to-yyyy']
       .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
     document.getElementById('sort').value = '';
     document.getElementById('duration').value = '';
+    document.getElementById('search-form-status').textContent = '';
+    document.getElementById('query').focus();
   }
 
   function quickSearch() {
@@ -1016,35 +1073,51 @@
   function runSearch() {
     const baseQuery = document.getElementById('query').value.trim();
     if (!baseQuery) {
-      const q = document.getElementById('query');
-      q.classList.add('error');
-      q.focus();
-      setTimeout(() => q.classList.remove('error'), 1600);
+      showSearchError('Enter keywords before searching.', document.getElementById('query'));
       return;
     }
 
     let after = '', before = '';
 
     if (mode === 'range') {
-      const yf = document.getElementById('year-from').value;
-      const yt = document.getElementById('year-to').value;
-      if (yf) after  = yf + '-01-01';
-      if (yt) before = (parseInt(yt, 10) + 1) + '-01-01';
+      const fromInput = document.getElementById('year-from');
+      const toInput = document.getElementById('year-to');
+      const yf = fromInput.value.trim();
+      const yt = toInput.value.trim();
+      if ((yf && !isValidYear(yf)) || (yt && !isValidYear(yt))) {
+        showSearchError('Enter years from 2005 through 2026.', !yf || isValidYear(yf) ? toInput : fromInput);
+        return;
+      }
+      if (yf && yt && Number(yf) > Number(yt)) {
+        showSearchError('The start year must be the same as or earlier than the end year.', fromInput);
+        return;
+      }
+      if (yf) after = yf + '-01-01';
+      if (yt) before = (Number(yt) + 1) + '-01-01';
     } else {
-      const fdd = document.getElementById('from-dd').value;
-      const fmm = document.getElementById('from-mm').value;
-      const fyy = document.getElementById('from-yyyy').value;
-      const tdd = document.getElementById('to-dd').value;
-      const tmm = document.getElementById('to-mm').value;
-      const tyy = document.getElementById('to-yyyy').value;
-      if (fyy && fmm && fdd) after = fyy + '-' + pad(fmm) + '-' + pad(fdd);
-      if (tyy && tmm && tdd) {
-        const d = new Date(parseInt(tyy, 10), parseInt(tmm, 10) - 1, parseInt(tdd, 10));
-        d.setDate(d.getDate() + 1);
-        before = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+      const from = readDateGroup('from');
+      const to = readDateGroup('to');
+      if (from.error) {
+        showSearchError(from.error, from.input);
+        return;
+      }
+      if (to.error) {
+        showSearchError(to.error, to.input);
+        return;
+      }
+      if (from.date && to.date && from.date > to.date) {
+        showSearchError('The start date must be the same as or earlier than the end date.', document.getElementById('from-dd'));
+        return;
+      }
+      if (from.date) after = formatDate(from.date);
+      if (to.date) {
+        const d = new Date(to.date.getTime());
+        d.setUTCDate(d.getUTCDate() + 1);
+        before = formatDate(d);
       }
     }
 
+    document.getElementById('search-form-status').textContent = '';
     const channel = document.getElementById('channel').value.trim();
 
     let fullQuery = baseQuery;
@@ -1062,37 +1135,156 @@
     const ytUrl = 'https://www.youtube.com/results?' + params.toString();
 
     if (resultsDest === 'onsite') {
-      // Show results inline via embed
-      const resultsSection = document.getElementById('results-section');
-      const frame = document.getElementById('results-frame');
-      document.getElementById('results-heading').textContent = 'Results for: ' + baseQuery;
-      // YouTube doesn't allow embedding results pages, so open a search in an embed-friendly way
-      // We'll show a friendly message with a clickable link instead
-      frame.srcdoc = `<html><body style="font-family:Arial,sans-serif;margin:0;background:#f8f8f8;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;text-align:center;padding:40px;box-sizing:border-box;">
-        <div style="background:#fff;border:1px solid #ccc;border-radius:4px;padding:30px 40px;max-width:460px;box-shadow:0 2px 8px rgba(0,0,0,0.1);">
-          <div style="background:#cc0000;display:inline-flex;align-items:center;justify-content:center;width:48px;height:34px;border-radius:8px;margin-bottom:14px;">
-            <span style="color:#fff;font-size:16px;margin-left:2px;">▶</span>
-          </div>
-          <h2 style="margin:0 0 8px;font-size:18px;color:#333;">YouTube blocks embedding</h2>
-          <p style="color:#666;font-size:13px;margin:0 0 20px;line-height:1.6;">YouTube's results page can't be embedded directly. Click below to open your search results in a new tab.</p>
-          <a href="${ytUrl}" target="_blank" rel="noopener"
-             style="display:inline-block;background:linear-gradient(180deg,#ff5555,#cc0000);color:#fff;text-decoration:none;font-weight:bold;padding:10px 24px;border-radius:3px;border:1px solid #990000;font-size:14px;">
-            Open Results on YouTube →
-          </a>
-          <p style="color:#aaa;font-size:11px;margin:14px 0 0;">Tip: Change this in ⚙ Settings → "Open on YouTube" to skip this step.</p>
-        </div>
-      </body></html>`;
-      resultsSection.style.display = 'block';
-      resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      const apiParams = new URLSearchParams({
+        part: 'snippet',
+        maxResults: '18',
+        type: 'video',
+        q: fullQuery,
+        key: YT_API_KEY
+      });
+      const apiOrder = { upload_date: 'date', view_count: 'viewCount', rating: 'rating' }[sort];
+      if (apiOrder) apiParams.set('order', apiOrder);
+      if (duration) apiParams.set('videoDuration', duration);
+      searchTubeDex(apiParams, baseQuery);
     } else {
       window.open(ytUrl, '_blank', 'noopener');
     }
   }
 
-  function encodeFilters(sort, duration) {
-    void sort;
-    void duration;
-    return null;
+  function isValidYear(value) {
+    return /^\d{4}$/.test(value) && Number(value) >= 2005 && Number(value) <= 2026;
+  }
+
+  function readDateGroup(prefix) {
+    const ids = [prefix + '-dd', prefix + '-mm', prefix + '-yyyy'];
+    const inputs = ids.map(id => document.getElementById(id));
+    const values = inputs.map(input => input.value.trim());
+    if (values.every(value => !value)) return { date: null };
+    if (values.some(value => !value)) {
+      return { error: 'Enter the day, month, and year together for each date.', input: inputs[values.findIndex(value => !value)] };
+    }
+    const [day, month, year] = values.map(Number);
+    if (!isValidYear(values[2]) || month < 1 || month > 12 || day < 1 || day > 31) {
+      return { error: 'Enter a valid date between 2005 and 2026.', input: inputs[0] };
+    }
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
+      return { error: 'That date does not exist. Check the day and month.', input: inputs[0] };
+    }
+    return { date };
+  }
+
+  function formatDate(date) {
+    return date.getUTCFullYear() + '-' + pad(date.getUTCMonth() + 1) + '-' + pad(date.getUTCDate());
+  }
+
+  function showSearchError(message, input) {
+    const status = document.getElementById('search-form-status');
+    status.textContent = message;
+    if (input) {
+      input.classList.add('error');
+      input.focus();
+      setTimeout(() => input.classList.remove('error'), 1600);
+    }
+  }
+
+  async function searchTubeDex(params, query) {
+    const requestId = ++activeSearchRequest;
+    const section = document.getElementById('results-section');
+    const status = document.getElementById('search-results-status');
+    const list = document.getElementById('search-results-list');
+    const searchButton = document.getElementById('search-btn');
+    section.style.display = 'block';
+    section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.getElementById('results-heading').textContent = 'Results for: ' + query;
+    status.textContent = 'Searching YouTube...';
+    list.replaceChildren();
+    searchButton.disabled = true;
+    searchButton.textContent = 'Searching...';
+    try {
+      if (!YT_API_KEY) {
+        throw new Error('YouTube API key not configured. Set localStorage.tubedex_youtube_api_key to enable TubeDex results.');
+      }
+      const response = await fetch('https://www.googleapis.com/youtube/v3/search?' + params.toString());
+      const data = await response.json();
+      if (requestId !== activeSearchRequest) return;
+      if (!response.ok || data.error) {
+        throw new Error(data.error?.message || 'YouTube search failed (' + response.status + ').');
+      }
+      const videos = (data.items || []).filter(video => video.id && video.id.videoId);
+      status.textContent = videos.length ? `${videos.length} results` : 'No videos found. Try different keywords or filters.';
+      renderSearchResults(videos);
+    } catch (error) {
+      if (requestId === activeSearchRequest) {
+        status.textContent = error instanceof TypeError
+          ? 'Could not connect to YouTube. Check your connection and try again.'
+          : error.message || 'YouTube search failed. Try again.';
+      }
+    } finally {
+      if (requestId === activeSearchRequest) {
+        searchButton.disabled = false;
+        searchButton.textContent = 'Search Videos';
+      }
+    }
+  }
+
+  function renderSearchResults(videos) {
+    const list = document.getElementById('search-results-list');
+    videos.forEach(video => {
+      const videoId = video.id.videoId;
+      const snippet = video.snippet || {};
+      const row = document.createElement('article');
+      row.className = 'search-result';
+      const thumbnail = document.createElement('img');
+      thumbnail.src = snippet.thumbnails?.medium?.url || snippet.thumbnails?.default?.url || '';
+      thumbnail.alt = '';
+      thumbnail.loading = 'lazy';
+      const info = document.createElement('div');
+      info.className = 'search-result-info';
+      const title = document.createElement('div');
+      title.className = 'search-result-title';
+      title.textContent = snippet.title || 'Untitled video';
+      const channel = document.createElement('div');
+      channel.className = 'search-result-channel';
+      channel.textContent = snippet.channelTitle || 'Unknown channel';
+      const actions = document.createElement('div');
+      actions.className = 'search-result-actions';
+      const addButton = document.createElement('button');
+      addButton.type = 'button';
+      addButton.textContent = 'Add to queue';
+      addButton.addEventListener('click', () => updatePlayerQueue(video, false));
+      const playButton = document.createElement('button');
+      playButton.type = 'button';
+      playButton.textContent = 'Play now';
+      playButton.addEventListener('click', () => updatePlayerQueue(video, true));
+      actions.append(addButton, playButton);
+      info.append(title, channel, actions);
+      row.append(thumbnail, info);
+      list.append(row);
+    });
+  }
+
+  function updatePlayerQueue(video, playNow) {
+    try {
+      const saved = JSON.parse(localStorage.getItem(PLAYER_QUEUE_KEY) || '{"playlist":[],"currentIndex":0}');
+      const playlist = Array.isArray(saved.playlist) ? saved.playlist : [];
+      let index = playlist.findIndex(item => item.id?.videoId === video.id.videoId);
+      if (index < 0) {
+        playlist.push(video);
+        index = playlist.length - 1;
+      }
+      if (playNow) saved.currentIndex = index;
+      saved.playlist = playlist;
+      saved.autoplay = playNow;
+      localStorage.setItem(PLAYER_QUEUE_KEY, JSON.stringify(saved));
+      if (playNow) {
+        window.open('TubeDexPlayer.html?autoplay=1', '_blank', 'noopener');
+      } else {
+        document.getElementById('search-results-status').textContent = 'Added to PlaylistPlayer queue.';
+      }
+    } catch (error) {
+      document.getElementById('search-results-status').textContent = 'Could not save the player queue in this browser. Check storage settings and try again.';
+    }
   }
 
   // Wire up search button
